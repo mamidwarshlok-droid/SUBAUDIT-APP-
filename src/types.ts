@@ -27,4 +27,6 @@ export interface AuditRecommendation {
   impact: 'High' | 'Medium' | 'Low';
   actionLabel: string;
   resolved: boolean;
+  confidenceScore?: number;
+  confidenceReason?: string;
 }

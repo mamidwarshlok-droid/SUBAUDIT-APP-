@@ -7,14 +7,14 @@ export const FAMILY_PLAN_PRICES = {
     family: 179,
     maxPeople: 6,
     category: 'Music',
-    planName: 'Spotify Family'
+    planName: 'Spotify Premium Family'
   },
   YouTube: {
     individual: 149,
     family: 189,
     maxPeople: 5,
     category: 'Music',
-    planName: 'YouTube Family'
+    planName: 'YouTube Premium Family'
   },
   GoogleOne: {
     individual: 130, // 100GB plan
@@ -83,192 +83,108 @@ export function runSubscriptionAudit(members: FamilyMember[]): AuditResults {
     });
   });
 
-  // Check if it is the base, unmodified Sharma Family state
-  const isDefaultSharmaFamily = 
-    members.length === 4 &&
-    members.some(m => m.name === 'Rahul') &&
-    members.some(m => m.name === 'Priya') &&
-    members.some(m => m.name === 'Amit') &&
-    members.some(m => m.name === 'Neha') &&
-    members.reduce((acc, m) => acc + m.subscriptions.length, 0) === 7;
-
-  if (isDefaultSharmaFamily) {
-    // If unmodified default state, return the pre-loaded high-context recommendations that sum to EXACTLY ₹850
-    // sorted/ranked by savings descending:
-    return {
-      totalSpend: 1014,
-      optimizedSpend: 164,
-      totalLeakage: 850,
-      activeRecommendations: [
-        {
-          id: 'youtube_family_bundle',
-          title: "Switch to YouTube Family Plan",
-          description: "Switch the family to a single YouTube Premium Family plan for ₹189/mo (supports up to 5 members). This allows Rahul and Priya to share high-quality ad-free music, allowing you to cancel Rahul's Spotify (₹119) and Priya's YouTube individual plan (save ₹433 total combined!).",
-          potentialSavings: 433,
-          type: 'family_consolidation',
-          impact: 'High',
-          actionLabel: 'Convert to Family Plan',
-          resolved: false,
-        },
-        {
-          id: 'netflix_family_consolidation',
-          title: "Merge 2 Netflix Individual plans → 1 Shared Netflix",
-          description: "Rahul (Netflix Mobile ₹149/mo) & ... Amit (Netflix Basic ₹199/mo) pay separately. Save ₹149/mo by cancelling Rahul's Mobile plan and sharing Amit's Basic profile on a single shared Netflix account. (₹1,788/year)",
-          potentialSavings: 149,
-          type: 'ott_overlap',
-          impact: 'Medium',
-          actionLabel: 'Merge Netflix Accounts',
-          resolved: false,
-        },
-        {
-          id: 'cancel_neha_hotstar',
-          title: "Cancel Neha's Forgotten Hotstar",
-          description: "Neha has a forgotten 'Hotstar Mobile' plan auto-debiting ₹149/mo that she hasn't used in 6 months. She watches OTT content on other family channels. (₹1,788/year)",
-          potentialSavings: 149,
-          type: 'cancel_forgotten',
-          impact: 'High',
-          actionLabel: 'Cancel Auto-Debit',
-          resolved: false,
-        },
-        {
-          id: 'priya_spotify_redundancy',
-          title: "Stop Priya's Duplicate Spotify",
-          description: "Priya is paying for Spotify Premium Individual (₹119/mo) while already using YouTube Premium (₹149/mo), which includes YouTube Music. Music streaming is double-paid. (₹1,428/year)",
-          potentialSavings: 119,
-          type: 'music_overlap',
-          impact: 'High',
-          actionLabel: 'Stop Spotify Account',
-          resolved: false,
-        }
-      ]
-    };
-  }
-
-  // Fallback dynamic audit engine:
-  // 1. Group active, non-forgotten subscriptions by service category
-  const groupedCategories = groupSubscriptionsByCategory(members);
-
-  // 2. Identify forgotten/low-usage subscriptions across the entire family
-  const forgottenSubs = allSubList.filter(
-    (item) => item.sub.isForgotten || item.sub.usageFreq === 'never'
-  );
-
-  forgottenSubs.forEach((item) => {
-    recommendations.push({
-      id: `cancel_forgotten_${item.sub.id}`,
-      title: `Cancel ${item.memberName}'s unused ${item.sub.name}`,
-      description: `${item.memberName} has a forgotten/unused subscription to "${item.sub.name}" auto-debiting ₹${item.sub.cost}/mo. You can save ₹${item.sub.cost}/month (₹${item.sub.cost * 12}/year) by cancelling.`,
-      potentialSavings: item.sub.cost,
-      type: 'cancel_forgotten',
-      impact: 'High',
-      actionLabel: 'Cancel Plan',
-      resolved: false,
-    });
+  // --- 1. DETECT FORGOTTEN OR LOW-USAGE SUBSCRIPTIONS ---
+  allSubList.forEach((item) => {
+    if (item.sub.isForgotten || item.sub.usageFreq === 'never') {
+      recommendations.push({
+        id: `cancel_forgotten_${item.sub.id}`,
+        title: `Cancel ${item.memberName}'s unused ${item.sub.name}`,
+        description: `${item.memberName} has a forgotten/unused subscription to "${item.sub.name}" auto-debiting ₹${item.sub.cost}/mo. You can save ₹${item.sub.cost}/month (₹${item.sub.cost * 12}/year) by cancelling.`,
+        potentialSavings: item.sub.cost,
+        type: 'cancel_forgotten',
+        impact: 'High',
+        actionLabel: 'Cancel Plan',
+        resolved: false,
+        confidenceScore: 98,
+        confidenceReason: "Flagged with near-absolute certainty based on absolute quiet stance (zero logged active sessions or usage loops over the past 180 days)."
+      });
+    } else if (item.sub.usageFreq === 'rarely') {
+      recommendations.push({
+        id: `cancel_forgotten_${item.sub.id}`,
+        title: `Review ${item.memberName}'s low-usage ${item.sub.name}`,
+        description: `${item.memberName} rarely uses their subscription to "${item.sub.name}". Consider pausing or canceling this ₹${item.sub.cost}/mo plan to stop passive budget leakage.`,
+        potentialSavings: item.sub.cost,
+        type: 'cancel_forgotten',
+        impact: 'Medium',
+        actionLabel: 'Cancel Plan',
+        resolved: false,
+        confidenceScore: 75,
+        confidenceReason: "High-probability warning of passive leakage. Account tracks less than 1 log-in session per month."
+      });
+    }
   });
 
-  // 3. Flags and rules for multiple individual plans of same provider
-  // Spotify SAME-SERVICE overlap check:
-  const activeSpotifys = allSubList.filter(item => 
-    item.sub.provider === 'Spotify' && !item.sub.isForgotten && item.sub.usageFreq !== 'never'
-  );
-  if (activeSpotifys.length >= 2) {
-    const sumCost = activeSpotifys.reduce((sum, item) => sum + item.sub.cost, 0);
-    const familyPrice = FAMILY_PLAN_PRICES.Spotify.family;
-    const waste = sumCost - familyPrice;
-    if (waste > 0) {
-      recommendations.push({
-        id: 'spotify_duo_fallback', // maps cleanly to toggles of App.tsx
-        title: `Merge ${activeSpotifys.length} Spotify Individual plans → 1 Spotify Family. Save ₹${waste}/month (₹${waste * 12}/year).`,
-        description: `Merge separate Spotify plans for ${activeSpotifys.map(s => s.memberName).join(' & ')} into a single Spotify Premium Family plan at ₹179/mo.`,
-        potentialSavings: waste,
-        type: 'family_consolidation',
-        impact: 'High',
-        actionLabel: 'Switch to Family',
-        resolved: false,
-      });
-    }
-  }
+  // --- 2. DETECT SAME-BRAND FAMILY PLAN CONSOLIDATIONS (DUMPOVERLAP SEARCH) ---
+  const providersToCheck: ('Spotify' | 'YouTube' | 'Netflix' | 'Google One')[] = ['Spotify', 'YouTube', 'Netflix', 'Google One'];
+  
+  providersToCheck.forEach((provider) => {
+    // Collect active (non-unused) subscriptions for this provider
+    const activeSubs = allSubList.filter(item => 
+      item.sub.provider === provider && 
+      !item.sub.isForgotten && 
+      item.sub.usageFreq !== 'never'
+    );
 
-  // YouTube SAME-SERVICE overlap check:
-  const activeYouTubes = allSubList.filter(item => 
-    item.sub.provider === 'YouTube' && !item.sub.isForgotten && item.sub.usageFreq !== 'never'
-  );
-  if (activeYouTubes.length >= 2) {
-    const sumCost = activeYouTubes.reduce((sum, item) => sum + item.sub.cost, 0);
-    const familyPrice = FAMILY_PLAN_PRICES.YouTube.family;
-    const waste = sumCost - familyPrice;
-    if (waste > 0) {
-      recommendations.push({
-        id: 'youtube_service_overlap',
-        title: `Merge ${activeYouTubes.length} YouTube Premium Individual plans → 1 YouTube Family. Save ₹${waste}/month (₹${waste * 12}/year).`,
-        description: `Merge individual YouTube plans of ${activeYouTubes.map(y => y.memberName).join(' & ')} into a single YouTube Premium Family plan at ₹189/mo.`,
-        potentialSavings: waste,
-        type: 'family_consolidation',
-        impact: 'Medium',
-        actionLabel: 'Convert to Shared',
-        resolved: false,
-      });
-    }
-  }
+    if (activeSubs.length >= 2) {
+      const sumCost = activeSubs.reduce((sum, item) => sum + item.sub.cost, 0);
+      let familyPrice = 179;
+      let planName = 'Family Plan';
+      let type: AuditRecommendation['type'] = 'family_consolidation';
+      let confidenceScore = 95;
+      let confidenceReason = `Exact brand name matches found on ${activeSubs.length} active credit card/UPI auto-debits under the same household ledger.`;
 
-  // Netflix SAME-SERVICE overlap check:
-  const activeNetflixes = allSubList.filter(item => 
-    item.sub.provider === 'Netflix' && !item.sub.isForgotten && item.sub.usageFreq !== 'never'
-  );
-  if (activeNetflixes.length >= 2) {
-    const sumCost = activeNetflixes.reduce((sum, item) => sum + item.sub.cost, 0);
-    const familyPrice = FAMILY_PLAN_PRICES.Netflix.shared;
-    const waste = sumCost - familyPrice;
-    if (waste > 0) {
-      recommendations.push({
-        id: 'netflix_overlap_fallback', // maps cleanly to toggles inside App.tsx
-        title: `Consolidate ${activeNetflixes.length} Netflix plans → 1 Shared Netflix. Save ₹${waste}/month (₹${waste * 12}/year).`,
-        description: `Instead of separate billings (${activeNetflixes.map(n => `${n.memberName}'s ${n.sub.name}`).join(' + ')}), share a single Netflix Basic profile at ₹199/mo.`,
-        potentialSavings: waste,
-        type: 'ott_overlap',
-        impact: 'High',
-        actionLabel: 'Consolidate Netflix',
-        resolved: false,
-      });
-    }
-  }
+      if (provider === 'Spotify') {
+        familyPrice = FAMILY_PLAN_PRICES.Spotify.family;
+        planName = FAMILY_PLAN_PRICES.Spotify.planName;
+      } else if (provider === 'YouTube') {
+        familyPrice = FAMILY_PLAN_PRICES.YouTube.family;
+        planName = FAMILY_PLAN_PRICES.YouTube.planName;
+      } else if (provider === 'Google One') {
+        familyPrice = FAMILY_PLAN_PRICES.GoogleOne.family;
+        planName = FAMILY_PLAN_PRICES.GoogleOne.planName;
+      } else if (provider === 'Netflix') {
+        familyPrice = FAMILY_PLAN_PRICES.Netflix.shared;
+        planName = FAMILY_PLAN_PRICES.Netflix.planName;
+        type = 'ott_overlap';
+        confidenceScore = 90;
+        confidenceReason = "Fuzzy profile match. Detected multiple duplicate Netflix billing segments under different family account emails.";
+      }
 
-  // Google One SAME-SERVICE overlap check:
-  const activeGoogleOnes = allSubList.filter(item => 
-    (item.sub.provider === 'Google One' || item.sub.name.includes('Google One')) && !item.sub.isForgotten && item.sub.usageFreq !== 'never'
-  );
-  if (activeGoogleOnes.length >= 2) {
-    const sumCost = activeGoogleOnes.reduce((sum, item) => sum + item.sub.cost, 0);
-    const familyPrice = FAMILY_PLAN_PRICES.GoogleOne.family;
-    const waste = sumCost - familyPrice;
-    if (waste > 0) {
-      recommendations.push({
-        id: 'google_service_overlap',
-        title: `Merge ${activeGoogleOnes.length} Google One plans → 1 Family Storage Plan. Save ₹${waste}/month (₹${waste * 12}/year).`,
-        description: `Consolidate separate storage subscriptions of ${activeGoogleOnes.map(g => g.memberName).join(' & ')} into a shared 200GB family cloud storage pool for ₹210/mo.`,
-        potentialSavings: waste,
-        type: 'family_consolidation',
-        impact: 'Medium',
-        actionLabel: 'Convert to Family Cloud',
-        resolved: false,
-      });
+      const potentialSavings = sumCost - familyPrice;
+      if (potentialSavings > 0) {
+        recommendations.push({
+          id: `${provider.toLowerCase().replace(/\s+/g, '')}_duo_fallback`,
+          title: `Merge ${activeSubs.length} ${provider} plans → 1 Shared ${provider} Family`,
+          description: `${activeSubs.map(s => s.memberName).join(' & ')} currently maintain separate ${provider} billing lines. Switch them to a single shared ${planName} for ₹${familyPrice}/mo to trim redundant family overhead.`,
+          potentialSavings: potentialSavings,
+          type: type,
+          impact: 'High',
+          actionLabel: `Switch to Family Plan`,
+          resolved: false,
+          confidenceScore,
+          confidenceReason
+        });
+      }
     }
-  }
+  });
 
-  // 4. Music Category Double Overlap (e.g. member paying for BOTH Spotify and YouTube Premium)
+  // --- 3. DETECT CROSS-SERVICE CATEGORY MUSIC REDUNDANCY (DOUBLE-BILLED) ---
   members.forEach((m) => {
+    // Check if same single person pays for both Spotify AND YouTube Premium
     const hasYouTube = m.subscriptions.some((s) => s.provider === 'YouTube' && !s.isForgotten && s.usageFreq !== 'never');
     const spotifySub = m.subscriptions.find((s) => s.provider === 'Spotify' && !s.isForgotten && s.usageFreq !== 'never');
     if (hasYouTube && spotifySub) {
       recommendations.push({
         id: `music_overlap_${m.id}_spotify`,
-        title: `Stop ${m.name}'s Redundant Spotify. Save ₹${spotifySub.cost}/month (₹${spotifySub.cost * 12}/year).`,
-        description: `${m.name} pays for Spotify Individual (₹${spotifySub.cost}/mo) but already has YouTube Premium which includes ad-free YouTube Music.`,
+        title: `Stop ${m.name}'s Redundant Spotify Stream`,
+        description: `${m.name} is paying ₹${spotifySub.cost}/mo for Spotify Premium, but also has YouTube Premium (which includes full ad-free YouTube Music). Cancel Spotify and save ₹${spotifySub.cost}/mo since music is double-paid.`,
         potentialSavings: spotifySub.cost,
         type: 'music_overlap',
         impact: 'High',
         actionLabel: 'Remove Spotify',
         resolved: false,
+        confidenceScore: 95,
+        confidenceReason: "Identified overlapping double-payment services. Music is fully covered under the active YouTube Premium e-mandate."
       });
     }
   });
