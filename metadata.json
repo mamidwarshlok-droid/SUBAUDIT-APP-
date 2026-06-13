@@ -1,0 +1,6 @@
+{
+  "name": "SubAudit",
+  "description": "Subscription leakage auditor for Indian households. Find duplicate, overlapping family plans, and forgotten subscriptions to save thousands.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
